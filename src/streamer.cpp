@@ -1,180 +1,6 @@
 #include "streamer.h"
 
-namespace RTMP
-{
-
-#define STREAM_PIX_FMT AV_PIX_FMT_YUV420P
-
-/*
-* RTMP_Streamer::Scaler methods
-*/
-
-Scaler::Scaler() : ctx = nullptr {}
-
-Scaler::~Scaler()
-{
-    if (ctx)
-    {
-        sws_freeContext(ctx);
-    }
-}
-
-int Scaler::Init(AVCodecContext *codec_ctx, int src_width, int src_height, int dst_width, int dst_height, int flags)
-{
-    ctx = sws_getContext(src_width, src_height, AV_PIX_FMT_BGR24, dst_width, dst_height,
-                         codec_ctx->pix_fmt, flags, nullptr, nullptr, nullptr);
-    if (!ctx)
-    {
-        fprintf(stderr, "Could not initialize sample scaler!\n");
-        return 1;
-    }
-    return 0;
-}
-
-/*
-* RTMP_Streamer::Picture methods
-*/
-Picture::Picture() : frame = nullptr,
-                     data = nullptr {}
-
-Picture::~Picture()
-{
-    if (data)
-    {
-        free(data);
-        data = nullptr;
-    }
-
-    if (frame)
-    {
-        av_frame_free(&frame);
-    }
-}
-
-int Picture::Init(enum AVPixelFormat pix_fmt, int width, int height) : frame = nullptr,
-                                                                       data = nullptr
-{
-    frame = av_frame_alloc();
-
-    int sz = av_image_get_buffer_size(pix_fmt, width, height, align_frame_buffer);
-    int ret = posix_memalign(reinterpret_cast<void **>(&data), align_frame_buffer, sz);
-
-    av_image_fill_arrays(frame->data, frame->linesize, data, pix_fmt, width, height, align_frame_buffer);
-    frame->format = pix_fmt;
-    frame->width = width;
-    frame->height = height;
-
-    return ret;
-}
-
-/*
-*
-*/
-Config::Config() : dst_width = 0,
-                   dst_height = 0,
-                   src_width = 0,
-                   src_height = 0,
-                   fps = 0,
-                   bitrate = 0 {}
-
-Config::Config(int source_width,
-               int source_height,
-               int stream_width,
-               int stream_height,
-               int stream_fps,
-               int stream_bitrate,
-               const std::string &stream_profile,
-               const std::string &stream_server)
-{
-    src_width = source_width;
-    src_height = source_height;
-    dst_width = stream_width;
-    dst_height = stream_height;
-    fps = stream_fps;
-    bitrate = stream_bitrate;
-    profile = stream_profile;
-    server = stream_server;
-}
-
-static int encode_and_write_frame(AVCodecContext *codec_ctx, AVFormatContext *fmt_ctx, AVFrame *frame)
-{
-    AVPacket pkt = {0};
-    av_init_packet(&pkt);
-
-    int ret = avcodec_send_frame(codec_ctx, frame);
-    if (ret < 0)
-    {
-        fprintf(stderr, "Error sending frame to codec context!\n");
-        return ret;
-    }
-
-    ret = avcodec_receive_packet(codec_ctx, &pkt);
-    if (ret < 0)
-    {
-        fprintf(stderr, "Error receiving packet from codec context!\n");
-        return ret;
-    }
-
-    av_interleaved_write_frame(fmt_ctx, &pkt);
-    av_packet_unref(&pkt);
-
-    return 0;
-}
-
-static int set_options_and_open_encoder(AVFormatContext *fctx,
-                                        AVStream *stream,
-                                        AVCodecContext *codec_ctx,
-                                        AVCodec *codec,
-                                        std::string codec_profile,
-                                        double width,
-                                        double height,
-                                        int fps,
-                                        int bitrate,
-                                        AVCodecID codec_id)
-{
-    const AVRational dst_fps = {fps, 1};
-
-    codec_ctx->codec_tag = 0;
-    codec_ctx->codec_id = codec_id;
-    codec_ctx->codec_type = AVMEDIA_TYPE_VIDEO;
-    codec_ctx->width = width;
-    codec_ctx->height = height;
-    codec_ctx->gop_size = 12;
-    codec_ctx->pix_fmt = STREAM_PIX_FMT;
-    codec_ctx->framerate = dst_fps;
-    codec_ctx->time_base = av_inv_q(dst_fps);
-    codec_ctx->bit_rate = bitrate;
-    if (fctx->oformat->flags & AVFMT_GLOBALHEADER)
-    {
-        codec_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-    }
-
-    stream->time_base = codec_ctx->time_base; //will be set afterwards by avformat_write_header to 1/1000
-
-    int ret = avcodec_parameters_from_context(stream->codecpar, codec_ctx);
-    if (ret < 0)
-    {
-        fprintf(stderr, "Could not initialize stream codec parameters!\n");
-        return 1;
-    }
-
-    AVDictionary *codec_options = nullptr;
-    av_dict_set(&codec_options, "profile", codec_profile.c_str(), 0);
-    av_dict_set(&codec_options, "preset", "fast", 0);
-    av_dict_set(&codec_options, "tune", "zerolatency", 0);
-
-    // open video encoder
-    ret = avcodec_open2(codec_ctx, codec, &codec_options);
-    if (ret < 0)
-    {
-        fprintf(stderr, "Could not open video encoder!\n");
-        return 1;
-    }
-    av_dict_free(&codec_options);
-    return 0;
-}
-
-Streamer::Streamer()
+RTMP::Streamer::Streamer()
 {
     format_ctx = nullptr;
     out_codec = nullptr;
@@ -186,7 +12,7 @@ Streamer::Streamer()
     network_init_ok = !avformat_network_init();
 }
 
-void Streamer::cleanup()
+void RTMP::Streamer::cleanup()
 {
     if (out_codec_ctx)
     {
@@ -205,40 +31,38 @@ void Streamer::cleanup()
     }
 }
 
-Streamer::~Streamer()
+RTMP::Streamer::~Streamer()
 {
     cleanup();
     avformat_network_deinit();
 }
 
-// void Streamer::stream_frame(const cv::Mat &image)
-// {
-//     if (can_stream())
-//     {
-//         const int stride[] = {static_cast<int>(image.step[0])};
-//         sws_scale(scaler.ctx, &image.data, stride, 0, image.rows, picture.frame->data, picture.frame->linesize);
-//         picture.frame->pts += av_rescale_q(1, out_codec_ctx->time_base, out_stream->time_base);
-//         encode_and_write_frame(out_codec_ctx, format_ctx, picture.frame);
-//     }
-// }
+// // void Streamer::stream_frame(const cv::Mat &image)
+// // {
+// //     if(can_stream()) {
+// //         const int stride[] = {static_cast<int>(image.step[0])};
+// //         sws_scale(scaler.ctx, &image.data, stride, 0, image.rows, picture.frame->data, picture.frame->linesize);
+// //         picture.frame->pts += av_rescale_q(1, out_codec_ctx->time_base, out_stream->time_base);
+// //         encode_and_write_frame(out_codec_ctx, format_ctx, picture.frame);
+// //     }
+// // }
 
-// void Streamer::stream_frame(const cv::Mat &image, int64_t frame_duration)
-// {
-//     if (can_stream())
-//     {
-//         const int stride[] = {static_cast<int>(image.step[0])};
-//         sws_scale(scaler.ctx, &image.data, stride, 0, image.rows, picture.frame->data, picture.frame->linesize);
-//         picture.frame->pts += frame_duration; //time of frame in milliseconds
-//         encode_and_write_frame(out_codec_ctx, format_ctx, picture.frame);
-//     }
-// }
+// // void Streamer::stream_frame(const cv::Mat &image, int64_t frame_duration)
+// // {
+// //     if(can_stream()) {
+// //         const int stride[] = {static_cast<int>(image.step[0])};
+// //         sws_scale(scaler.ctx, &image.data, stride, 0, image.rows, picture.frame->data, picture.frame->linesize);
+// //         picture.frame->pts += frame_duration; //time of frame in milliseconds
+// //         encode_and_write_frame(out_codec_ctx, format_ctx, picture.frame);
+// //     }
+// // }
 
-void Streamer::enable_av_debug_log()
+void RTMP::Streamer::enable_av_debug_log()
 {
     av_log_set_level(AV_LOG_DEBUG);
 }
 
-int Streamer::Init(const StreamerConfig &streamer_config)
+int RTMP::Streamer::Init(const RTMP::Config &streamer_config)
 {
     init_ok = false;
     cleanup();
@@ -289,8 +113,16 @@ int Streamer::Init(const StreamerConfig &streamer_config)
 
     out_codec_ctx = avcodec_alloc_context3(out_codec);
 
-    if (set_options_and_open_encoder(format_ctx, out_stream, out_codec_ctx, out_codec, config.profile,
-                                     config.dst_width, config.dst_height, config.fps, config.bitrate, codec_id))
+    if (RTMP::Encoder::set_options_and_open_encoder(format_ctx,
+                                                   out_stream,
+                                                   out_codec_ctx,
+                                                   out_codec, 
+                                                   config.profile,
+                                                   config.dst_width,
+                                                   config.dst_height,
+                                                   config.fps,
+                                                   config.bitrate,
+                                                   codec_id))
     {
         return 1;
     }
@@ -317,5 +149,3 @@ int Streamer::Init(const StreamerConfig &streamer_config)
     init_ok = true;
     return 0;
 }
-
-} // namespace RTMP

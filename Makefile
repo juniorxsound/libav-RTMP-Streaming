@@ -3,7 +3,7 @@ clean:
 
 build: clean
 	docker run -w /files --rm -it  -v `pwd`:/files leandromoreira/ffmpeg-devel \
-	  g++ -std=c++11 -L/opt/ffmpeg/lib -I/files/src/*.cpp -I/opt/ffmpeg/include/ /files/src/main.cpp \
+	  g++ -std=c++11 -L/files/src -L/opt/ffmpeg/lib -I/opt/ffmpeg/include/ /files/src/streamer.cpp /files/src/scaler.cpp /files/src/picture.cpp /files/src/config.cpp /files/src/encoder.cpp /files/src/main.cpp \
 	  -lavcodec -lavformat -lavfilter -lavdevice -lswresample -lswscale -lavutil \
 	  -o /files/build/streamer
 
