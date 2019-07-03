@@ -1,33 +1,15 @@
-
 #include <iostream>
-#include <chrono>
 
 #include "streamer.h"
-#include "scaler.h"
-#include "picture.h"
-#include "config.h"
-#include "encoder.h"
 
-using namespace std;
-using namespace RTMP;
-
-#define VIMEO_LIVE_RTMP_ENDPOINT "rtmp://rtmp-global.cloud.vimeo.com/live"
-
-int main()
+int main(int argc, char *argv[])
 {
-    cout << endl
-         << "Welcome to RTMP streamer 📽" << endl
-         << "Written by @juniorxsound <https://orfleisher.com>" << endl
-         << endl;
+	std::cout << std::endl
+						<< "Welcome to RTMP streamer 📽" << std::endl
+						<< "Written by @juniorxsound <https://orfleisher.com>" << std::endl
+						<< std::endl;
 
-    Streamer streamer;
-    // streamer.enable_av_debug_log();
+	Streamer streamer("samples/test.mp4", "rtmp://your_rtmp_streaming_endpoint");
 
-    Config stream_config(640, 360,
-                         640, 360,
-                         30, 50000, "high444", (string)VIMEO_LIVE_RTMP_ENDPOINT + "/stream-key");
-
-    streamer.Init(stream_config);
-
-    return 0;
+	return streamer.Stream();
 }

@@ -1,3 +1,7 @@
 build
 .vscode
 .DS_Store
+*.mp4
+*.avi
+*.mov
+*.mpeg

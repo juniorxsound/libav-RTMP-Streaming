@@ -1,151 +1,168 @@
 #include "streamer.h"
 
-RTMP::Streamer::Streamer()
+Streamer::Streamer(const char *_videoFileName,
+                   const char *_rtmpServerAdress) : videoFileName(_videoFileName),
+                                                    rtmpServerAdress(_rtmpServerAdress)
 {
-    format_ctx = nullptr;
-    out_codec = nullptr;
-    out_stream = nullptr;
-    out_codec_ctx = nullptr;
-    rtmp_server_conn = false;
     av_register_all();
-    inv_stream_timebase = 30.0;
-    network_init_ok = !avformat_network_init();
+    avformat_network_init();
+
+    ret = setupInput(videoFileName);
+    if (ret < 0)
+        return;
+
+    ret = setupOutput(rtmpServerAdress);
+    if (ret < 0)
+        return;
 }
 
-void RTMP::Streamer::cleanup()
+Streamer::~Streamer()
 {
-    if (out_codec_ctx)
+}
+
+int Streamer::setupInput(const char *_videoFileName)
+{
+    if ((ret = avformat_open_input(&ifmt_ctx, _videoFileName, 0, 0)) < 0)
     {
-        avcodec_close(out_codec_ctx);
-        avcodec_free_context(&out_codec_ctx);
+        printf("Could not open input file.");
+        return -1;
     }
 
-    if (format_ctx)
+    if ((ret = avformat_find_stream_info(ifmt_ctx, 0)) < 0)
     {
-        if (format_ctx->pb)
+        printf("Failed to retrieve input stream information");
+        return -1;
+    }
+
+    for (int i = 0; i < ifmt_ctx->nb_streams; i++)
+    {
+        if (ifmt_ctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO)
         {
-            avio_close(format_ctx->pb);
+            videoindex = i;
+            break;
         }
-        avformat_free_context(format_ctx);
-        format_ctx = nullptr;
-    }
-}
-
-RTMP::Streamer::~Streamer()
-{
-    cleanup();
-    avformat_network_deinit();
-}
-
-// // void Streamer::stream_frame(const cv::Mat &image)
-// // {
-// //     if(can_stream()) {
-// //         const int stride[] = {static_cast<int>(image.step[0])};
-// //         sws_scale(scaler.ctx, &image.data, stride, 0, image.rows, picture.frame->data, picture.frame->linesize);
-// //         picture.frame->pts += av_rescale_q(1, out_codec_ctx->time_base, out_stream->time_base);
-// //         encode_and_write_frame(out_codec_ctx, format_ctx, picture.frame);
-// //     }
-// // }
-
-// // void Streamer::stream_frame(const cv::Mat &image, int64_t frame_duration)
-// // {
-// //     if(can_stream()) {
-// //         const int stride[] = {static_cast<int>(image.step[0])};
-// //         sws_scale(scaler.ctx, &image.data, stride, 0, image.rows, picture.frame->data, picture.frame->linesize);
-// //         picture.frame->pts += frame_duration; //time of frame in milliseconds
-// //         encode_and_write_frame(out_codec_ctx, format_ctx, picture.frame);
-// //     }
-// // }
-
-void RTMP::Streamer::enable_av_debug_log()
-{
-    av_log_set_level(AV_LOG_DEBUG);
-}
-
-int RTMP::Streamer::Init(const RTMP::Config &streamer_config)
-{
-    init_ok = false;
-    cleanup();
-
-    config = streamer_config;
-
-    if (!network_init_ok)
-    {
-        return 1;
     }
 
-    //initialize format context for output with flv and no filename
-    avformat_alloc_output_context2(&format_ctx, nullptr, "flv", nullptr);
-    if (!format_ctx)
+    av_dump_format(ifmt_ctx, 0, _videoFileName, 0);
+}
+
+int Streamer::setupOutput(const char *_rtmpServerAdress)
+{
+    avformat_alloc_output_context2(&ofmt_ctx, NULL, "flv", _rtmpServerAdress); //RTMP
+    if (!ofmt_ctx)
     {
-        return 1;
+        printf("Could not create output context\n");
+        ret = AVERROR_UNKNOWN;
+        return -1;
     }
 
-    //AVIOContext for accessing the resource indicated by url
-    if (!(format_ctx->oformat->flags & AVFMT_NOFILE))
+    ofmt = ofmt_ctx->oformat;
+    for (int i = 0; i < ifmt_ctx->nb_streams; i++)
     {
-        int avopen_ret = avio_open2(&format_ctx->pb, config.server.c_str(),
-                                    AVIO_FLAG_WRITE, nullptr, nullptr);
-        if (avopen_ret < 0)
+        //Create output AVStream according to input AVStream
+        AVStream *in_stream = ifmt_ctx->streams[i];
+        AVStream *out_stream = avformat_new_stream(ofmt_ctx, in_stream->codec->codec);
+        if (!out_stream)
         {
-            fprintf(stderr, "failed to open stream output context, stream will not work\n");
-            return 1;
+            printf("Failed allocating output stream\n");
+            ret = AVERROR_UNKNOWN;
+            return -1;
         }
-        rtmp_server_conn = true;
-    }
+        //Copy the settings of AVCodecContext
+        ret = avcodec_copy_context(out_stream->codec, in_stream->codec);
+        if (ret < 0)
+        {
+            printf("Failed to copy context from input to output stream codec context\n");
+            return -1;
+        }
+        out_stream->codec->codec_tag = 0;
 
-    //use selected codec
-    AVCodecID codec_id = AV_CODEC_ID_H264;
-    out_codec = avcodec_find_encoder(codec_id);
-    if (!(out_codec))
+        if (ofmt_ctx->oformat->flags & 1 << 22)
+            out_stream->codec->flags |= 1 << 22;
+    }
+}
+
+int Streamer::Stream()
+{
+    av_dump_format(ofmt_ctx, 0, rtmpServerAdress, 1);
+    //Open output URL
+    if (!(ofmt->flags & AVFMT_NOFILE))
     {
-        fprintf(stderr, "Could not find encoder for '%s'\n",
-                avcodec_get_name(codec_id));
-        return 1;
+        ret = avio_open(&ofmt_ctx->pb, rtmpServerAdress, AVIO_FLAG_WRITE);
+        if (ret < 0)
+        {
+            printf("Could not open output URL '%s'", rtmpServerAdress);
+            return -1;
+        }
     }
-
-    out_stream = avformat_new_stream(format_ctx, out_codec);
-    if (!out_stream)
+    //Write file header
+    ret = avformat_write_header(ofmt_ctx, NULL);
+    if (ret < 0)
     {
-        fprintf(stderr, "Could not allocate stream\n");
-        return 1;
+        printf("Error occurred when opening output URL\n");
+        return -1;
     }
 
-    out_codec_ctx = avcodec_alloc_context3(out_codec);
-
-    if (RTMP::Encoder::set_options_and_open_encoder(format_ctx,
-                                                   out_stream,
-                                                   out_codec_ctx,
-                                                   out_codec, 
-                                                   config.profile,
-                                                   config.dst_width,
-                                                   config.dst_height,
-                                                   config.fps,
-                                                   config.bitrate,
-                                                   codec_id))
+    start_time = av_gettime();
+    while (1)
     {
-        return 1;
+        AVStream *in_stream, *out_stream;
+        ret = av_read_frame(ifmt_ctx, &pkt);
+        if (ret < 0)
+            break;
+        if (pkt.pts == AV_NOPTS_VALUE)
+        {
+            //Write PTS
+            AVRational time_base1 = ifmt_ctx->streams[videoindex]->time_base;
+            //Duration between 2 frames (us)
+            int64_t calc_duration = (double)AV_TIME_BASE / av_q2d(ifmt_ctx->streams[videoindex]->r_frame_rate);
+            //Parameters
+            pkt.pts = (double)(frame_index * calc_duration) / (double)(av_q2d(time_base1) * AV_TIME_BASE);
+            pkt.dts = pkt.pts;
+            pkt.duration = (double)calc_duration / (double)(av_q2d(time_base1) * AV_TIME_BASE);
+        }
+        if (pkt.stream_index == videoindex)
+        {
+            AVRational time_base = ifmt_ctx->streams[videoindex]->time_base;
+            AVRational time_base_q = {1, AV_TIME_BASE};
+            int64_t pts_time = av_rescale_q(pkt.dts, time_base, time_base_q);
+            int64_t now_time = av_gettime() - start_time;
+            if (pts_time > now_time)
+                av_usleep(pts_time - now_time);
+        }
+
+        in_stream = ifmt_ctx->streams[pkt.stream_index];
+        out_stream = ofmt_ctx->streams[pkt.stream_index];
+        pkt.pts = av_rescale_q_rnd(pkt.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+        pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+        pkt.duration = av_rescale_q(pkt.duration, in_stream->time_base, out_stream->time_base);
+        pkt.pos = -1;
+        if (pkt.stream_index == videoindex)
+        {
+            frame_index++;
+        }
+        //ret = av_write_frame(ofmt_ctx, &pkt);
+        ret = av_interleaved_write_frame(ofmt_ctx, &pkt);
+
+        if (ret < 0)
+        {
+            printf("Error muxing packet\n");
+            break;
+        }
+
+        av_free_packet(&pkt);
     }
 
-    out_stream->codecpar->extradata_size = out_codec_ctx->extradata_size;
-    out_stream->codecpar->extradata = static_cast<uint8_t *>(av_mallocz(out_codec_ctx->extradata_size));
-    memcpy(out_stream->codecpar->extradata, out_codec_ctx->extradata, out_codec_ctx->extradata_size);
-
-    av_dump_format(format_ctx, 0, config.server.c_str(), 1);
-
-    picture.Init(out_codec_ctx->pix_fmt, config.dst_width, config.dst_height);
-    scaler.Init(out_codec_ctx, config.src_width, config.src_height, config.dst_width, config.dst_height, SWS_BILINEAR);
-
-    if (avformat_write_header(format_ctx, nullptr) < 0)
+    //Write file trailer
+    av_write_trailer(ofmt_ctx);
+    avformat_close_input(&ifmt_ctx);
+    if (ofmt_ctx && !(ofmt->flags & AVFMT_NOFILE))
+        avio_close(ofmt_ctx->pb);
+    avformat_free_context(ofmt_ctx);
+    if (ret < 0 && ret != AVERROR_EOF)
     {
-        fprintf(stderr, "Could not write header!\n");
-        return 1;
+        printf("Error occurred.\n");
+        return -1;
     }
-
-    printf("stream time base = %d / %d \n", out_stream->time_base.num, out_stream->time_base.den);
-
-    inv_stream_timebase = (double)out_stream->time_base.den / (double)out_stream->time_base.num;
-
-    init_ok = true;
     return 0;
 }
