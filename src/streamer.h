@@ -37,8 +37,8 @@ private:
   const char *rtmpServerAdress;
 
 protected:
-  int videoindex = -1;
-  int frame_index = 0;
-  int64_t start_time = 0;
+  int videoIndex = -1;
+  int frameIndex = 0;
+  int64_t startTime = 0;
 };
 #endif

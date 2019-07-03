@@ -38,7 +38,7 @@ int Streamer::setupInput(const char *_videoFileName)
     {
         if (ifmt_ctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO)
         {
-            videoindex = i;
+            videoIndex = i;
             break;
         }
     }
@@ -103,7 +103,7 @@ int Streamer::Stream()
         return -1;
     }
 
-    start_time = av_gettime();
+    startTime = av_gettime();
     while (1)
     {
         AVStream *in_stream, *out_stream;
@@ -113,20 +113,20 @@ int Streamer::Stream()
         if (pkt.pts == AV_NOPTS_VALUE)
         {
             //Write PTS
-            AVRational time_base1 = ifmt_ctx->streams[videoindex]->time_base;
+            AVRational time_base1 = ifmt_ctx->streams[videoIndex]->time_base;
             //Duration between 2 frames (us)
-            int64_t calc_duration = (double)AV_TIME_BASE / av_q2d(ifmt_ctx->streams[videoindex]->r_frame_rate);
+            int64_t calc_duration = (double)AV_TIME_BASE / av_q2d(ifmt_ctx->streams[videoIndex]->r_frame_rate);
             //Parameters
-            pkt.pts = (double)(frame_index * calc_duration) / (double)(av_q2d(time_base1) * AV_TIME_BASE);
+            pkt.pts = (double)(frameIndex * calc_duration) / (double)(av_q2d(time_base1) * AV_TIME_BASE);
             pkt.dts = pkt.pts;
             pkt.duration = (double)calc_duration / (double)(av_q2d(time_base1) * AV_TIME_BASE);
         }
-        if (pkt.stream_index == videoindex)
+        if (pkt.stream_index == videoIndex)
         {
-            AVRational time_base = ifmt_ctx->streams[videoindex]->time_base;
+            AVRational time_base = ifmt_ctx->streams[videoIndex]->time_base;
             AVRational time_base_q = {1, AV_TIME_BASE};
             int64_t pts_time = av_rescale_q(pkt.dts, time_base, time_base_q);
-            int64_t now_time = av_gettime() - start_time;
+            int64_t now_time = av_gettime() - startTime;
             if (pts_time > now_time)
                 av_usleep(pts_time - now_time);
         }
@@ -137,9 +137,9 @@ int Streamer::Stream()
         pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
         pkt.duration = av_rescale_q(pkt.duration, in_stream->time_base, out_stream->time_base);
         pkt.pos = -1;
-        if (pkt.stream_index == videoindex)
+        if (pkt.stream_index == videoIndex)
         {
-            frame_index++;
+            frameIndex++;
         }
         //ret = av_write_frame(ofmt_ctx, &pkt);
         ret = av_interleaved_write_frame(ofmt_ctx, &pkt);
