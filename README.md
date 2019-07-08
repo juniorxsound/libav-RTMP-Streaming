@@ -10,7 +10,7 @@
 1. Clone or download the repo `git clone https://github.com/juniorxsound/libav-RTMP-Streaming.git`
 2. Place an mp4 file you would like to stream in `samples/` folder
 3. Create a `build` folder inside the root directory
-4. From within the root directory run `make setup` to create the Docker container
+4. From within the root directory run `make build` to create the Docker container
 5. Open `main.cpp` and change the video file name and RTMP server address in line 12
 ```cpp
 Streamer streamer("samples/your_video_test_file.mp4", "rtmp://your_rtmp_streaming_endpoint");
